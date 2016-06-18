@@ -24,10 +24,11 @@ gsettings set org.gnome.gedit.preferences.encodings auto-detected "['UTF-8', 'WI
 
 #Устанавливаем нужные пакеты
 PACKAGES="gdebi indicator-multiload 
+libreoffice libreoffice-l10n-ru libreoffice-help-ru
 git maven oracle-java7-installer oracle-java8-installer 
-gtk-redshift gnome-system-tools unity-tweak-tool
 chromium-browser pepperflashplugin-nonfree 
-variety shutter p7zip vlc "
+variety shutter p7zip vlc 
+gtk-redshift gnome-system-tools unity-tweak-tool"
 
 sudo apt-get -y --force-yes install $PACKAGES
 
