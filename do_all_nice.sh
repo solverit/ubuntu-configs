@@ -5,6 +5,7 @@ apt-get update
 apt-get -y --force-yes dist-upgrade
 
 #Добавляем нужные репы
+add-apt-repository --yes ppa:canonical-kernel-team/ppa
 add-apt-repository --yes ppa:graphics-drivers/ppa
 add-apt-repository --yes ppa:git-core/ppa
 add-apt-repository --yes ppa:webupd8team/java
