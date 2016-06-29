@@ -18,7 +18,7 @@ apt-key adv --recv-keys --keyserver keyserver.ubuntu.com `apt-get update 2>&1 | 
 
 #Обновление пакетов
 apt-get update
-apt-get upgrade
+apt-get -y --force-yes dist-upgrade
 
 #Фиксим кодировки
 gsettings set org.gnome.gedit.preferences.encodings auto-detected "['UTF-8', 'WINDOWS-1251', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
