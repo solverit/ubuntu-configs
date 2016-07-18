@@ -20,7 +20,8 @@ apt-key adv --recv-keys --keyserver keyserver.ubuntu.com `apt-get update 2>&1 | 
 apt-get update
 
 #Фиксим кодировки
-gsettings set org.gnome.gedit.preferences.encodings auto-detected "['UTF-8', 'WINDOWS-1251', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
+#gsettings set org.gnome.gedit.preferences.encodings auto-detected "['UTF-8', 'WINDOWS-1251', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
+gsettings set org.gnome.gedit.preferences.encodings candidate-encodings "['UTF-8', 'WINDOWS-1251', 'KOI8-R', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
 
 #Устанавливаем нужные пакеты
 PACKAGES="gdebi indicator-multiload 
