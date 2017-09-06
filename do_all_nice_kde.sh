@@ -33,6 +33,10 @@ wget -q https://www.virtualbox.org/download/oracle_vbox_2016.asc -O- | apt-key a
 wget -q https://www.virtualbox.org/download/oracle_vbox.asc -O- | apt-key add -
 echo "deb http://download.virtualbox.org/virtualbox/debian xenial contrib" | tee -a /etc/apt/sources.list.d/vbox.list
 
+#openvpn
+wget -qO - https://swupdate.openvpn.net/repos/repo-public.gpg | apt-key add -
+echo "deb http://build.openvpn.net/debian/openvpn/release/2.4 xenial main" | tee /etc/apt/sources.list.d/openvpn-aptrepo.list
+
 #Проверим ключи репозиториев
 apt-key adv --recv-keys --keyserver keyserver.ubuntu.com `apt-get update 2>&1 | grep -o '[0-9A-Z]\{16\}$' | xargs`
 
@@ -43,7 +47,7 @@ apt-get -y --force-yes dist-upgrade
 
 
 #Устанавливаем нужные пакеты
-PACKAGES="docker-ce mc git maven sbt redshift chromium-browser shutter p7zip vlc sublime-text nvidia-384 nvidia-settings virtualbox-5.1"
+PACKAGES="docker-ce mc git maven sbt redshift chromium-browser shutter p7zip vlc sublime-text nvidia-384 nvidia-settings virtualbox-5.1 openvpn"
 
 sudo apt-get -y --force-yes install $PACKAGES
 
