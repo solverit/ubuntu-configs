@@ -53,6 +53,7 @@ sudo apt-get -y --force-yes install $PACKAGES
 
 #env
 sudo usermod -aG docker $USER
+sudo usermod -aG vboxusers $USER
 
 
 # sudo apt-get install nvidia-384 nvidia-settings oracle-java7-installer oracle-java8-installer
