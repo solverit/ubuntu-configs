@@ -10,7 +10,7 @@ add-apt-repository --yes ppa:graphics-drivers/ppa
 add-apt-repository --yes ppa:git-core/ppa
 add-apt-repository --yes ppa:libreoffice/ppa
 
-apt-get -y install curl wget apt-transport-https
+apt-get -y install curl wget apt-transport-https gnupg lsb-release
 
 # sublime
 wget -qO - https://download.sublimetext.com/sublimehq-pub.gpg | sudo apt-key add -
@@ -18,8 +18,10 @@ echo "deb https://download.sublimetext.com/ apt/stable/" | sudo tee /etc/apt/sou
 # add-apt-repository --yes "deb https://download.sublimetext.com/ apt/stable/"
 
 # VS Code
-wget -q https://packages.microsoft.com/keys/microsoft.asc -O- | sudo apt-key add -
-echo "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+install -o root -g root -m 644 packages.microsoft.gpg /etc/apt/trusted.gpg.d/
+sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/trusted.gpg.d/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
+rm -f packages.microsoft.gpg
 # add-apt-repository --yes "deb [arch=amd64] https://packages.microsoft.com/repos/vscode stable main"
 
 # Skype
@@ -28,8 +30,9 @@ echo "deb [arch=amd64] https://repo.skype.com/deb stable main" | sudo tee /etc/a
 # add-apt-repository --yes "deb [arch=amd64] https://repo.skype.com/deb stable main"
 
 # docker
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-add-apt-repository --yes "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 # add-apt-repository \
 #    "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
 #    $(lsb_release -cs) \
@@ -47,8 +50,8 @@ wget http://repo.yandex.ru/yandex-disk/yandex-disk_latest_amd64.deb
 dpkg -i --force-depends yandex-disk_latest_amd64.deb
 
 # sbt
-apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 2EE0EA64E40A89B84B2DF73499E82A75642AC823
-echo "deb https://dl.bintray.com/sbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt.list
+curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo apt-key add
+echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
 # add-apt-repository --yes "deb https://dl.bintray.com/sbt/debian /"
 
 # virtualbox
@@ -70,7 +73,7 @@ apt-get -y dist-upgrade
 
 
 # Устанавливаем нужные пакеты
-PACKAGES="zsh docker-ce mc git maven sbt chromium-browser p7zip vlc sublime-text code openvpn synaptic build-essential mono-complete keepassx skypeforlinux"
+PACKAGES="zsh docker-ce mc git maven sbt chromium-browser p7zip vlc sublime-text code openvpn network-manager-openvpn synaptic build-essential mono-complete keepassxc skypeforlinux"
 
 sudo apt-get -y install $PACKAGES
 
@@ -101,6 +104,5 @@ sysctl -p
 
 # usb power off
 # sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/&usbcore.autosuspend=-1 /' /etc/default/grub
-
 
 # sudo ubuntu-drivers autoinstall
