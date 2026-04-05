@@ -53,7 +53,7 @@ apt-get update
 apt-get -y dist-upgrade
 
 # Устанавливаем нужные пакеты
-PACKAGES="zsh mc git maven p7zip vlc sublime-text code openvpn network-manager-openvpn-gnome build-essential keepassxc docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+PACKAGES="zsh mc git maven p7zip vlc sublime-text code openvpn network-manager-openvpn-gnome build-essential golang-go keepassxc docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 
 sudo apt-get -y install $PACKAGES
 # oh my zsh
