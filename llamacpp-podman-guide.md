@@ -144,11 +144,18 @@ chmod +x llamacpp-podman-setup.sh
 ./llamacpp-podman-setup.sh
 ```
 
-С указанием объёма GPU:
+Скрипт работает в **два этапа**:
+
+1. **Конфигурация** — спрашивает все параметры (GPU memory, подтверждение), показывает summary.
+2. **Тихая установка** — без дополнительных вопросов; прогресс `[1/8]…[8/8]`, детали в log-файле.
+
+Полностью без вопросов (CI / скрипты):
 
 ```bash
-./llamacpp-podman-setup.sh --gpu-mem 124
+./llamacpp-podman-setup.sh --gpu-mem 124 --yes
 ```
+
+Log тихой фазы: `/tmp/llamacpp-setup-<pid>.log` (или `LLAMACPP_SETUP_LOG`).
 
 Скрипт:
 
@@ -166,20 +173,50 @@ chmod +x llamacpp-podman-setup.sh
 
 ---
 
-# 5. Удаление сервиса
+# 5. Удаление
 
 ```bash
 ./llamacpp-podman-setup.sh --uninstall
 ```
 
-Удаляется:
+Сначала — опрос опций (или флаги CLI), затем тихое выполнение.
 
-- user-service и Quadlet;
-- контейнер `llama.cpp-rocm`.
+## По умолчанию (всегда)
 
-**Сохраняется** весь каталог `~/.llamacpp` (config, cache, scripts).
+- останавливает `llama.cpp-rocm.service`
+- удаляет `~/.config/containers/systemd/llama.cpp-rocm.container`
+- перезагружает user systemd
 
-Переустановка:
+**Не трогает:** `~/.llamacpp`, Podman-контейнеры, образ, GRUB, linger.
+
+## Дополнительные опции
+
+| Флаг | Действие |
+|------|----------|
+| `--remove-containers` | Удалить Podman-контейнер(ы) этого setup (`llama.cpp-rocm` и на базе образа ROCm) |
+| `--purge-cache` | Удалить только `~/.llamacpp/cache` |
+| `--remove-image` | Удалить образ `rocm-7.2.3` из Podman |
+| `--reset-grub` | Убрать из GRUB параметры, добавленные скриптом (`iommu=pt`, `amdgpu.gttsize`, `ttm.pages_limit`) |
+| `--purge-all` | **Всё данные setup:** весь `~/.llamacpp`, контейнеры, образ, GRUB, `loginctl disable-linger` |
+
+Примеры:
+
+```bash
+# только service + Quadlet
+./llamacpp-podman-setup.sh --uninstall --yes
+
+# + контейнеры
+./llamacpp-podman-setup.sh --uninstall --remove-containers --yes
+
+# полная зачистка данных (Podman как приложение остаётся)
+./llamacpp-podman-setup.sh --uninstall --purge-all --yes
+```
+
+Podman (`apt install podman`) **не удаляется** — только контейнеры и образ этого setup.
+
+После `--reset-grub` или `--purge-all` нужен reboot.
+
+Переустановка после минимального uninstall:
 
 ```bash
 ./llamacpp-podman-setup.sh --gpu-mem 124
@@ -464,7 +501,8 @@ sudo reboot
 ## Удаление
 
 ```bash
-./llamacpp-podman-setup.sh --uninstall
+./llamacpp-podman-setup.sh --uninstall              # service + Quadlet
+./llamacpp-podman-setup.sh --uninstall --purge-all --yes   # все данные setup
 ```
 
 ## Обновление образа

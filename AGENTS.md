@@ -44,6 +44,8 @@ ubuntu-configs/
 ### Modern user-level (`llamacpp-podman-setup.sh`)
 
 - Запуск **только от обычного пользователя** (не root).
+- Сначала опрос параметров (GPU memory, confirm), затем тихая установка без вопросов.
+- Non-interactive: `./llamacpp-podman-setup.sh --gpu-mem GB --yes`
 - `set -euo pipefail`, явные `need_cmd`, `die`, `warn`.
 - **Идемпотентность**: `write_if_changed` / `write_executable_if_changed`, не перезаписывает `~/.llamacpp/config/llama.env` если уже есть.
 - Side effects в `$HOME`: `~/.llamacpp/`, `~/.config/containers/systemd/*.container`.
@@ -79,7 +81,7 @@ ubuntu-configs/
 - Порт по умолчанию: `7777`
 - **GRUB** обновляется скриптом идемпотентно: `iommu=pt`, `amdgpu.gttsize`, `ttm.pages_limit` (замена, не дописывание)
 - Дефолтная модель: `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` + MTP flags в `EXTRA_ARGS`
-- Удаление: `./llamacpp-podman-setup.sh --uninstall` (сохраняет `~/.llamacpp`)
+- Удаление: `./llamacpp-podman-setup.sh --uninstall` (default: service + Quadlet); опции `--remove-containers`, `--purge-cache`, `--remove-image`, `--reset-grub`, `--purge-all`
 - Не использовать `systemctl --user enable` для Quadlet-generated unit — только `start`/`restart`
 
 Подробности, troubleshooting, смена модели — в `llamacpp-podman-guide.md`.

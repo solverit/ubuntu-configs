@@ -8,11 +8,12 @@ set -euo pipefail
 # Target hardware: AMD Ryzen AI MAX+ 395 / Strix Halo (128 GB unified memory)
 #
 # Usage:
-#   ./llamacpp-podman-setup.sh [--gpu-mem 60|90|114|124]
-#   ./llamacpp-podman-setup.sh --uninstall
+#   ./llamacpp-podman-setup.sh                         # interactive prompts, then quiet install
+#   ./llamacpp-podman-setup.sh --gpu-mem 124 --yes     # fully non-interactive
+#   ./llamacpp-podman-setup.sh --uninstall [--remove-containers] [--purge-cache]
+#                               [--remove-image] [--reset-grub] [--purge-all]
 #
-# Installs or updates the user service. Keeps ~/.llamacpp/config/llama.env on reinstall.
-# Uninstall removes the service and Quadlet but preserves ~/.llamacpp (config + cache).
+# Flow: collect all parameters first, then configure silently (no further prompts).
 
 IMAGE_DEFAULT="${LLAMACPP_ROCM_IMAGE:-docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3}"
 SERVICE_NAME="${LLAMACPP_SERVICE_NAME:-llama.cpp-rocm}"
@@ -28,15 +29,28 @@ ENV_FILE="${CONFIG_DIR}/llama.env"
 SYSTEM_ENV="${CONFIG_DIR}/system.env"
 START_SCRIPT="${SCRIPTS_DIR}/start-llama.sh"
 QUADLET_FILE="${QUADLET_DIR}/${SERVICE_NAME}.container"
+LOG_FILE="${LLAMACPP_SETUP_LOG:-${TMPDIR:-/tmp}/llamacpp-setup-$$.log}"
 
 SYSTEMD_SERVICE="${SERVICE_NAME}.service"
 GRUB_FILE="/etc/default/grub"
 
 VALID_GPU_MEM=(60 90 114 124)
 DEFAULT_GPU_MEM=124
+INSTALL_STEPS=8
 
 ACTION="install"
 GPU_MEM=""
+ASSUME_YES=0
+QUIET=0
+STEP=0
+
+# Uninstall options (default: service + Quadlet only)
+UNINSTALL_REMOVE_CONTAINERS=0
+UNINSTALL_PURGE_CACHE=0
+UNINSTALL_REMOVE_IMAGE=0
+UNINSTALL_RESET_GRUB=0
+UNINSTALL_PURGE_ALL=0
+UNINSTALL_CLI_OPTS=0
 
 usage() {
   cat <<EOF
@@ -45,14 +59,23 @@ Usage: $0 [OPTIONS]
 Install or update llama.cpp ROCm user service (default).
 
 Options:
-  --gpu-mem GB   GPU VRAM allocation: 60, 90, 114, or 124 (default: saved or ${DEFAULT_GPU_MEM})
-  --uninstall    Stop service, remove Quadlet; keep ~/.llamacpp
+  --gpu-mem GB   GPU VRAM allocation: 60, 90, 114, or 124
+  --yes, -y      Skip confirmation prompts (required for non-interactive install)
+
+Uninstall (default: stop user-service and remove Quadlet only):
+  --uninstall              Remove service integration
+  --remove-containers      Also remove Podman container(s) for this setup
+  --purge-cache            Also remove ~/.llamacpp/cache
+  --remove-image           Also remove the ROCm container image from Podman
+  --reset-grub             Also remove script-managed kernel parameters from GRUB
+  --purge-all              Remove all script data: ~/.llamacpp, containers, image, GRUB, linger
+
   -h, --help     Show this help
 
-Examples:
-  $0
-  $0 --gpu-mem 90
-  $0 --uninstall
+Interactive mode asks all parameters upfront, then installs silently.
+Non-interactive: $0 --gpu-mem 124 --yes
+
+Log file during quiet phase: ${LOG_FILE}
 EOF
 }
 
@@ -64,8 +87,37 @@ parse_args() {
         GPU_MEM="$2"
         shift 2
         ;;
+      --yes|-y)
+        ASSUME_YES=1
+        shift
+        ;;
       --uninstall|--remove)
         ACTION="uninstall"
+        shift
+        ;;
+      --remove-containers)
+        UNINSTALL_REMOVE_CONTAINERS=1
+        UNINSTALL_CLI_OPTS=1
+        shift
+        ;;
+      --purge-cache)
+        UNINSTALL_PURGE_CACHE=1
+        UNINSTALL_CLI_OPTS=1
+        shift
+        ;;
+      --remove-image)
+        UNINSTALL_REMOVE_IMAGE=1
+        UNINSTALL_CLI_OPTS=1
+        shift
+        ;;
+      --reset-grub)
+        UNINSTALL_RESET_GRUB=1
+        UNINSTALL_CLI_OPTS=1
+        shift
+        ;;
+      --purge-all)
+        UNINSTALL_PURGE_ALL=1
+        UNINSTALL_CLI_OPTS=1
         shift
         ;;
       -h|--help)
@@ -90,18 +142,100 @@ has_group() {
   id -nG "$USER" | tr ' ' '\n' | grep -qx "$1"
 }
 
-section() {
-  echo
-  echo "==> $*"
+log() {
+  echo "[$(date '+%H:%M:%S')] $*" >>"$LOG_FILE"
+}
+
+say() {
+  if [[ "${QUIET}" -eq 0 ]]; then
+    echo "$@"
+  fi
 }
 
 warn() {
   echo "WARNING: $*" >&2
+  log "WARNING: $*"
 }
 
 die() {
   echo "ERROR: $*" >&2
+  log "ERROR: $*"
   exit 1
+}
+
+progress() {
+  STEP=$((STEP + 1))
+  log "[${STEP}/${INSTALL_STEPS}] $*"
+  if [[ "${QUIET}" -eq 1 ]]; then
+    echo "  [${STEP}/${INSTALL_STEPS}] $*"
+  else
+    echo
+    echo "==> $*"
+  fi
+}
+
+confirm() {
+  local prompt="$1"
+  local answer
+
+  if [[ "${ASSUME_YES}" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ ! -t 0 ]]; then
+    die "Non-interactive mode requires --yes (prompt: ${prompt})"
+  fi
+
+  read -r -p "${prompt} [Y/n]: " answer
+  case "${answer}" in
+    ""|y|Y|yes|Yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+confirm_no() {
+  local prompt="$1"
+  local answer
+
+  if [[ "${ASSUME_YES}" -eq 1 ]]; then
+    return 1
+  fi
+
+  if [[ ! -t 0 ]]; then
+    return 1
+  fi
+
+  read -r -p "${prompt} [y/N]: " answer
+  case "${answer}" in
+    y|Y|yes|Yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+apply_purge_all_flags() {
+  UNINSTALL_REMOVE_CONTAINERS=1
+  UNINSTALL_PURGE_CACHE=0
+  UNINSTALL_REMOVE_IMAGE=1
+  UNINSTALL_RESET_GRUB=1
+  UNINSTALL_PURGE_ALL=1
+}
+
+has_managed_kernel_params() {
+  local params="$1"
+  [[ "$params" == *"iommu=pt"* ]] \
+    || [[ "$params" == *"amdgpu.gttsize="* ]] \
+    || [[ "$params" == *"ttm.pages_limit="* ]]
+}
+
+ensure_sudo() {
+  need_cmd sudo || die "sudo required for GRUB updates and linger"
+  if ! sudo -n true 2>/dev/null; then
+    say "Administrator privileges required for GRUB and linger."
+    sudo -v
+  fi
+  ( while true; do sleep 50; sudo -v; done ) &
+  SUDO_KEEPALIVE_PID=$!
+  trap 'kill "${SUDO_KEEPALIVE_PID}" 2>/dev/null || true' EXIT
 }
 
 is_valid_gpu_mem() {
@@ -134,26 +268,48 @@ read_saved_gpu_mem() {
 }
 
 prompt_gpu_mem() {
-  local choice
-  echo "Select GPU memory allocation for ROCm (GB):"
-  select choice in "${VALID_GPU_MEM[@]}"; do
-    if [[ -n "$choice" ]]; then
+  local default="${DEFAULT_GPU_MEM}"
+  local saved choice
+
+  if saved="$(read_saved_gpu_mem 2>/dev/null)"; then
+    default="$saved"
+    say "Saved GPU allocation: ${saved} GB"
+  fi
+
+  say
+  say "GPU memory for ROCm (GB):"
+  local i=1
+  local opt
+  for opt in "${VALID_GPU_MEM[@]}"; do
+    if [[ "$opt" == "$default" ]]; then
+      say "  ${i}) ${opt} (default)"
+    else
+      say "  ${i}) ${opt}"
+    fi
+    i=$((i + 1))
+  done
+
+  while true; do
+    read -r -p "Choice [${default}]: " choice
+    choice="${choice:-$default}"
+
+    if is_valid_gpu_mem "$choice"; then
       GPU_MEM="$choice"
       return 0
     fi
-    echo "Invalid choice, try again."
+
+    if [[ "$choice" =~ ^[1-4]$ ]]; then
+      GPU_MEM="${VALID_GPU_MEM[$((choice - 1))]}"
+      return 0
+    fi
+
+    say "Invalid choice. Enter 60, 90, 114, 124 or option number 1-4."
   done
 }
 
-resolve_gpu_mem() {
+resolve_gpu_mem_interactive() {
   if [[ -n "$GPU_MEM" ]]; then
     is_valid_gpu_mem "$GPU_MEM" || die "Invalid --gpu-mem: ${GPU_MEM}. Use: ${VALID_GPU_MEM[*]}"
-    return 0
-  fi
-
-  if saved="$(read_saved_gpu_mem 2>/dev/null)"; then
-    GPU_MEM="$saved"
-    echo "Using saved GPU memory allocation: ${GPU_MEM} GB"
     return 0
   fi
 
@@ -162,8 +318,218 @@ resolve_gpu_mem() {
     return 0
   fi
 
+  if saved="$(read_saved_gpu_mem 2>/dev/null)"; then
+    GPU_MEM="$saved"
+    return 0
+  fi
+
   GPU_MEM="$DEFAULT_GPU_MEM"
-  echo "Using default GPU memory allocation: ${GPU_MEM} GB"
+}
+
+model_config_summary() {
+  if [[ -f "$ENV_FILE" ]]; then
+    echo "keep existing ${ENV_FILE}"
+  else
+    echo "create default (unsloth/Qwen3.6-35B-A3B-MTP-GGUF)"
+  fi
+}
+
+print_install_summary() {
+  local gttsize pages_limit
+
+  gttsize="$(gpu_mem_gttsize "$GPU_MEM")"
+  pages_limit="$(gpu_mem_pages_limit "$GPU_MEM")"
+
+  say
+  say "Summary:"
+  say "  GPU allocation:    ${GPU_MEM} GB"
+  say "  Kernel params:     iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
+  say "  Container image:   ${IMAGE_DEFAULT}"
+  say "  Model config:      $(model_config_summary)"
+  say "  Service:           ${SYSTEMD_SERVICE}"
+  say "  Log file:          ${LOG_FILE}"
+}
+
+collect_install_parameters() {
+  : >"$LOG_FILE"
+  log "Starting parameter collection"
+
+  say "=== llama.cpp ROCm setup — configuration ==="
+  say
+
+  resolve_gpu_mem_interactive
+  print_install_summary
+  say
+
+  confirm "Start installation?" || die "Installation cancelled."
+
+  ensure_sudo
+  QUIET=1
+
+  say
+  say "=== Installing (quiet mode) ==="
+  log "Parameters collected: GPU_MEM=${GPU_MEM}"
+}
+
+  log "GRUB updated for ${gb} GB"
+}
+
+reset_grub_managed_params() {
+  local current stripped tmp_grub
+
+  current="$(read_grub_cmdline_default)"
+  stripped="$(strip_managed_kernel_params "$current")"
+
+  if ! has_managed_kernel_params "$current"; then
+    log "GRUB already has no script-managed kernel parameters"
+    return 0
+  fi
+
+  log "GRUB reset: ${current} -> ${stripped}"
+
+  tmp_grub="$(mktemp)"
+  sudo grep -v '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" >"$tmp_grub"
+  printf '%s\n' "GRUB_CMDLINE_LINUX_DEFAULT=\"${stripped}\"" >>"$tmp_grub"
+  sudo cp "$tmp_grub" "$GRUB_FILE"
+  rm -f "$tmp_grub"
+
+  if command -v update-grub >/dev/null 2>&1; then
+    sudo update-grub >>"$LOG_FILE" 2>&1
+  else
+    die "update-grub not found"
+  fi
+
+  log "GRUB managed kernel parameters removed"
+}
+
+remove_setup_containers() {
+  if ! command -v podman >/dev/null 2>&1; then
+    log "podman not found, skipping container removal"
+    return 0
+  fi
+
+  podman rm -f "$SERVICE_NAME" >>"$LOG_FILE" 2>&1 || true
+
+  local ids
+  ids="$(podman ps -aq --filter "ancestor=${IMAGE_DEFAULT}" 2>/dev/null || true)"
+  if [[ -n "${ids}" ]]; then
+    # shellcheck disable=SC2086
+    podman rm -f ${ids} >>"$LOG_FILE" 2>&1 || true
+    log "Removed containers for image: ${IMAGE_DEFAULT}"
+  fi
+}
+
+remove_setup_image() {
+  if ! command -v podman >/dev/null 2>&1; then
+    log "podman not found, skipping image removal"
+    return 0
+  fi
+
+  podman rmi -f "$IMAGE_DEFAULT" >>"$LOG_FILE" 2>&1 || true
+  log "Removed image (if present): ${IMAGE_DEFAULT}"
+}
+
+disable_user_linger() {
+  if loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes$'; then
+    sudo loginctl disable-linger "$USER" >>"$LOG_FILE" 2>&1
+    log "Linger disabled for user: $USER"
+  else
+    log "Linger was not enabled"
+  fi
+}
+
+count_uninstall_steps() {
+  local n=2
+  [[ "${UNINSTALL_REMOVE_CONTAINERS}" -eq 1 ]] && n=$((n + 1))
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    n=$((n + 1))
+  elif [[ "${UNINSTALL_PURGE_CACHE}" -eq 1 ]]; then
+    n=$((n + 1))
+  fi
+  [[ "${UNINSTALL_REMOVE_IMAGE}" -eq 1 ]] && n=$((n + 1))
+  [[ "${UNINSTALL_RESET_GRUB}" -eq 1 ]] && n=$((n + 1))
+  [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]] && n=$((n + 1))
+  echo "$n"
+}
+
+print_uninstall_summary() {
+  say
+  say "Uninstall plan:"
+  say "  [always] Stop user-service:  ${SYSTEMD_SERVICE}"
+  say "  [always] Remove Quadlet:     ${QUADLET_FILE}"
+  say "  [always] Reload user systemd"
+
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    say "  [purge-all] Remove ~/.llamacpp (config, cache, scripts)"
+    say "  [purge-all] Remove Podman container(s) for this setup"
+    say "  [purge-all] Remove container image: ${IMAGE_DEFAULT}"
+    say "  [purge-all] Reset GRUB kernel parameters (iommu=pt, amdgpu.gttsize, ttm.pages_limit)"
+    say "  [purge-all] Disable user linger"
+    return 0
+  fi
+
+  [[ "${UNINSTALL_REMOVE_CONTAINERS}" -eq 1 ]] \
+    && say "  Remove Podman container(s) for this setup"
+  [[ "${UNINSTALL_PURGE_CACHE}" -eq 1 ]] \
+    && say "  Remove model cache: ${CACHE_DIR}"
+  [[ "${UNINSTALL_REMOVE_IMAGE}" -eq 1 ]] \
+    && say "  Remove container image: ${IMAGE_DEFAULT}"
+  [[ "${UNINSTALL_RESET_GRUB}" -eq 1 ]] \
+    && say "  Reset GRUB kernel parameters"
+
+  say
+  say "Preserved (unless selected above):"
+  [[ "${UNINSTALL_PURGE_CACHE}" -eq 0 && "${UNINSTALL_PURGE_ALL}" -eq 0 ]] \
+    && say "  ${BASE_DIR}/"
+  [[ "${UNINSTALL_REMOVE_CONTAINERS}" -eq 0 ]] \
+    && say "  Podman container(s) (if any)"
+  [[ "${UNINSTALL_REMOVE_IMAGE}" -eq 0 ]] \
+    && say "  Container image in Podman"
+  [[ "${UNINSTALL_RESET_GRUB}" -eq 0 ]] \
+    && say "  GRUB kernel parameters"
+}
+
+collect_uninstall_parameters() {
+  : >"$LOG_FILE"
+  log "Starting uninstall parameter collection"
+
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    apply_purge_all_flags
+  elif [[ "${UNINSTALL_CLI_OPTS}" -eq 0 && -t 0 && "${ASSUME_YES}" -eq 0 ]]; then
+    say "=== llama.cpp ROCm — uninstall options ==="
+    say
+    say "Default removal: user-service + Quadlet file."
+    say
+
+    confirm_no "Also remove Podman container(s) for this setup?" \
+      && UNINSTALL_REMOVE_CONTAINERS=1
+
+    if confirm_no "Purge ALL script data (~/.llamacpp, containers, image, GRUB, linger)?"; then
+      apply_purge_all_flags
+    else
+      confirm_no "Purge model cache only (${CACHE_DIR})?" \
+        && UNINSTALL_PURGE_CACHE=1
+      confirm_no "Remove container image (${IMAGE_DEFAULT})?" \
+        && UNINSTALL_REMOVE_IMAGE=1
+      confirm_no "Reset GRUB kernel parameters added by this script?" \
+        && UNINSTALL_RESET_GRUB=1
+    fi
+  fi
+
+  say "=== llama.cpp ROCm — uninstall ==="
+  print_uninstall_summary
+  say
+
+  if [[ "${UNINSTALL_RESET_GRUB}" -eq 1 || "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    ensure_sudo
+  fi
+
+  confirm "Proceed with uninstall?" || die "Uninstall cancelled."
+
+  QUIET=1
+  say
+  say "=== Uninstalling (quiet mode) ==="
+  log "Uninstall confirmed: containers=${UNINSTALL_REMOVE_CONTAINERS} cache=${UNINSTALL_PURGE_CACHE} image=${UNINSTALL_REMOVE_IMAGE} grub=${UNINSTALL_RESET_GRUB} purge_all=${UNINSTALL_PURGE_ALL}"
 }
 
 write_system_env() {
@@ -177,11 +543,11 @@ GPU_VRAM_GB=${GPU_MEM}
 EOT
   if [[ -f "$SYSTEM_ENV" ]] && cmp -s "$tmp" "$SYSTEM_ENV"; then
     rm -f "$tmp"
-    echo "Unchanged: $SYSTEM_ENV"
+    log "Unchanged: $SYSTEM_ENV"
   else
     install -m 0644 "$tmp" "$SYSTEM_ENV"
     rm -f "$tmp"
-    echo "Written: $SYSTEM_ENV (GPU_VRAM_GB=${GPU_MEM})"
+    log "Written: $SYSTEM_ENV (GPU_VRAM_GB=${GPU_MEM})"
   fi
 }
 
@@ -236,34 +602,29 @@ update_grub_for_gpu_mem() {
   gttsize="$(gpu_mem_gttsize "$gb")"
   pages_limit="$(gpu_mem_pages_limit "$gb")"
 
-  section "Updating GRUB kernel parameters for ${gb} GB GPU allocation"
-
-  need_cmd sudo || die "sudo required to edit ${GRUB_FILE}"
-
   current="$(read_grub_cmdline_default)"
 
   if kernel_params_match "$current" "$gttsize" "$pages_limit"; then
-    echo "GRUB already configured: iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
+    log "GRUB already configured for ${gb} GB"
     return 0
   fi
 
   merged="$(merge_kernel_params "$current" "$gttsize" "$pages_limit")"
-  echo "Current: ${current}"
-  echo "Updated: ${merged}"
+  log "GRUB: ${current} -> ${merged}"
 
   tmp_grub="$(mktemp)"
-  sudo grep -v '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" > "$tmp_grub"
-  printf '%s\n' "GRUB_CMDLINE_LINUX_DEFAULT=\"${merged}\"" >> "$tmp_grub"
+  sudo grep -v '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" >"$tmp_grub"
+  printf '%s\n' "GRUB_CMDLINE_LINUX_DEFAULT=\"${merged}\"" >>"$tmp_grub"
   sudo cp "$tmp_grub" "$GRUB_FILE"
   rm -f "$tmp_grub"
 
   if command -v update-grub >/dev/null 2>&1; then
-    sudo update-grub
+    sudo update-grub >>"$LOG_FILE" 2>&1
   else
     die "update-grub not found"
   fi
 
-  echo "GRUB updated. Reboot required for new kernel parameters to take effect."
+  log "GRUB updated for ${gb} GB"
 }
 
 check_runtime_kernel_params() {
@@ -275,13 +636,12 @@ check_runtime_kernel_params() {
   cmdline="$(cat /proc/cmdline)"
 
   if kernel_params_match "$cmdline" "$gttsize" "$pages_limit"; then
-    echo "Active kernel parameters match ${gb} GB allocation."
+    log "Active kernel parameters match ${gb} GB"
     return 0
   fi
 
-  warn "Active kernel parameters do not match ${gb} GB allocation yet."
-  warn "Expected: iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
-  warn "Reboot after GRUB update if you have not already."
+  warn "Active kernel parameters do not match ${gb} GB yet — reboot required."
+  log "Expected: iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
 }
 
 write_if_changed() {
@@ -289,15 +649,15 @@ write_if_changed() {
   local tmp
   tmp="$(mktemp)"
 
-  cat > "$tmp"
+  cat >"$tmp"
 
   if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
     rm -f "$tmp"
-    echo "Unchanged: $target"
+    log "Unchanged: $target"
   else
     install -m 0644 "$tmp" "$target"
     rm -f "$tmp"
-    echo "Written: $target"
+    log "Written: $target"
   fi
 }
 
@@ -306,21 +666,21 @@ write_executable_if_changed() {
   local tmp
   tmp="$(mktemp)"
 
-  cat > "$tmp"
+  cat >"$tmp"
 
   if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
     rm -f "$tmp"
     chmod +x "$target"
-    echo "Unchanged: $target"
+    log "Unchanged: $target"
   else
     install -m 0755 "$tmp" "$target"
     rm -f "$tmp"
-    echo "Written: $target"
+    log "Written: $target"
   fi
 }
 
 write_default_llama_env() {
-  cat > "$ENV_FILE" <<'EOT'
+  cat >"$ENV_FILE" <<'EOT'
 # ~/.llamacpp/config/llama.env
 #
 # Edit this file and restart:
@@ -352,93 +712,111 @@ EOT
 }
 
 do_uninstall() {
-  section "Uninstalling llama.cpp ROCm user service"
+  collect_uninstall_parameters
+  INSTALL_STEPS="$(count_uninstall_steps)"
+  STEP=0
 
+  progress "Stopping user-service"
   systemctl --user stop "$SYSTEMD_SERVICE" 2>/dev/null || true
-  podman rm -f "$SERVICE_NAME" 2>/dev/null || true
+  log "Stopped (if running): ${SYSTEMD_SERVICE}"
 
+  progress "Removing Quadlet"
   if [[ -f "$QUADLET_FILE" ]]; then
     rm -f "$QUADLET_FILE"
-    echo "Removed: $QUADLET_FILE"
+    log "Removed: $QUADLET_FILE"
   else
-    echo "Quadlet not found: $QUADLET_FILE"
+    log "Quadlet not found: $QUADLET_FILE"
   fi
 
   systemctl --user daemon-reload 2>/dev/null || true
   systemctl --user reset-failed 2>/dev/null || true
+  log "User systemd reloaded"
 
-  cat <<EOT
+  if [[ "${UNINSTALL_REMOVE_CONTAINERS}" -eq 1 ]]; then
+    progress "Removing Podman container(s)"
+    remove_setup_containers
+  fi
 
-Uninstall complete.
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    progress "Removing ~/.llamacpp"
+    if [[ -d "$BASE_DIR" ]]; then
+      rm -rf "$BASE_DIR"
+      log "Removed: ${BASE_DIR}"
+    fi
+  elif [[ "${UNINSTALL_PURGE_CACHE}" -eq 1 ]]; then
+    progress "Purging model cache"
+    if [[ -d "$CACHE_DIR" ]]; then
+      rm -rf "$CACHE_DIR"
+      log "Removed: ${CACHE_DIR}"
+    fi
+  fi
 
-Removed:
-  User service:  ${SYSTEMD_SERVICE}
-  Quadlet:       ${QUADLET_FILE}
+  if [[ "${UNINSTALL_REMOVE_IMAGE}" -eq 1 ]]; then
+    progress "Removing container image"
+    remove_setup_image
+  fi
 
-Preserved:
-  ${BASE_DIR}/   (config, cache, scripts)
+  if [[ "${UNINSTALL_RESET_GRUB}" -eq 1 ]]; then
+    progress "Resetting GRUB kernel parameters"
+    reset_grub_managed_params
+  fi
 
-Reinstall:
-  $0 [--gpu-mem 60|90|114|124]
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    progress "Disabling user linger"
+    disable_user_linger
+  fi
 
-EOT
+  say
+  say "=== Uninstall complete ==="
+  say "Log: ${LOG_FILE}"
+  if [[ "${UNINSTALL_PURGE_ALL}" -eq 0 ]]; then
+    say "Reinstall: $0"
+  fi
+  if [[ "${UNINSTALL_RESET_GRUB}" -eq 1 || "${UNINSTALL_PURGE_ALL}" -eq 1 ]]; then
+    say "Reboot to apply GRUB changes."
+  fi
 }
 
 do_install() {
-  resolve_gpu_mem
+  collect_install_parameters
+  STEP=0
 
-  section "Checking required tools"
-
+  progress "Checking required tools"
   need_cmd podman || die "Install podman first: sudo apt install -y podman"
   need_cmd systemctl || die "systemctl not found"
   need_cmd loginctl || die "loginctl not found"
   need_cmd curl || warn "curl not found. Health-check examples will require curl."
-  need_cmd sudo || die "sudo required for GRUB updates"
 
-  section "Checking ROCm device nodes"
-
+  progress "Checking ROCm devices and groups"
   if [[ ! -e /dev/kfd ]]; then
-    warn "/dev/kfd not found. ROCm will not work until the AMD kernel driver exposes /dev/kfd."
+    warn "/dev/kfd not found."
   else
-    ls -l /dev/kfd
+    log "$(ls -l /dev/kfd)"
   fi
-
   if [[ ! -d /dev/dri ]]; then
-    warn "/dev/dri not found. GPU device nodes are missing."
+    warn "/dev/dri not found."
   else
-    ls -l /dev/dri || true
+    log "$(ls -l /dev/dri 2>/dev/null || true)"
+  fi
+  if ! has_group render || ! has_group video; then
+    warn "User '$USER' should be in groups render and video. Run: sudo usermod -aG render,video $USER"
   fi
 
-  section "Checking user groups"
-
-  if ! has_group render; then
-    warn "User '$USER' is not in group 'render'."
-    warn "Run: sudo usermod -aG render,video $USER"
-    warn "Then reboot or fully log out and log in again."
-  fi
-
-  if ! has_group video; then
-    warn "User '$USER' is not in group 'video'."
-    warn "Run: sudo usermod -aG render,video $USER"
-    warn "Then reboot or fully log out and log in again."
-  fi
-
+  progress "Writing system config"
   mkdir -p "$CACHE_DIR" "$CONFIG_DIR" "$SCRIPTS_DIR" "$QUADLET_DIR"
-
   write_system_env
+
+  progress "Updating GRUB kernel parameters"
   update_grub_for_gpu_mem "$GPU_MEM"
   check_runtime_kernel_params "$GPU_MEM"
 
-  section "Creating default model config if missing"
-
+  progress "Writing model config and scripts"
   if [[ -f "$ENV_FILE" ]]; then
-    echo "Keeping existing config: $ENV_FILE"
+    log "Keeping existing config: $ENV_FILE"
   else
     write_default_llama_env
-    echo "Created: $ENV_FILE"
+    log "Created: $ENV_FILE"
   fi
-
-  section "Writing container start script"
 
   write_executable_if_changed "$START_SCRIPT" <<'EOT'
 #!/usr/bin/env bash
@@ -513,8 +891,6 @@ else
 fi
 EOT
 
-  section "Writing user Quadlet"
-
   write_if_changed "$QUADLET_FILE" <<EOT
 [Unit]
 Description=Universal llama.cpp ROCm server
@@ -551,103 +927,53 @@ TimeoutStartSec=1800
 WantedBy=default.target
 EOT
 
-  section "Pulling or updating container image"
+  progress "Pulling container image"
+  podman pull -q "$IMAGE_DEFAULT" >>"$LOG_FILE" 2>&1
 
-  podman pull "$IMAGE_DEFAULT"
-
-  section "Testing ROCm visibility inside the container"
-
+  progress "Testing ROCm in container"
   set +e
-  podman run --rm -it \
+  podman run --rm \
     --device /dev/dri \
     --device /dev/kfd \
     --group-add video \
     --group-add render \
     --security-opt seccomp=unconfined \
     "$IMAGE_DEFAULT" \
-    llama-cli --list-devices
+    llama-cli --list-devices >>"$LOG_FILE" 2>&1
   rocm_test_status=$?
   set -e
 
   if [[ "$rocm_test_status" -ne 0 ]]; then
-    warn "ROCm test failed. The service files were created, but llama.cpp may not start."
-    warn "Check groups, /dev/kfd, /dev/dri, and kernel parameters (reboot if GRUB was just updated)."
+    warn "ROCm test failed — see ${LOG_FILE}"
   fi
 
-  section "Enabling linger for user service autostart after reboot"
-
-  if loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes$'; then
-    echo "Linger already enabled for user: $USER"
+  progress "Enabling linger and starting service"
+  if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes$'; then
+    sudo loginctl enable-linger "$USER" >>"$LOG_FILE" 2>&1
+    log "Linger enabled for user: $USER"
   else
-    sudo loginctl enable-linger "$USER"
-    echo "Linger enabled for user: $USER"
+    log "Linger already enabled"
   fi
-
-  section "Reloading user systemd"
 
   systemctl --user daemon-reload
-
-  section "Starting user Quadlet service"
-
   systemctl --user start "$SYSTEMD_SERVICE"
-
-  section "Setup completed"
 
   local_gttsize="$(gpu_mem_gttsize "$GPU_MEM")"
   local_pages_limit="$(gpu_mem_pages_limit "$GPU_MEM")"
 
-  cat <<EOT
-
-Created or verified:
-
-  Base directory:     ${BASE_DIR}
-  Cache directory:    ${CACHE_DIR}
-  Model config:       ${ENV_FILE}
-  System config:      ${SYSTEM_ENV}
-  Start script:       ${START_SCRIPT}
-  Quadlet file:       ${QUADLET_FILE}
-
-GPU allocation:       ${GPU_MEM} GB
-Kernel parameters:    iommu=pt amdgpu.gttsize=${local_gttsize} ttm.pages_limit=${local_pages_limit}
-
-Service:
-
-  ${SYSTEMD_SERVICE}
-
-Current status:
-
-  systemctl --user status ${SYSTEMD_SERVICE}
-
-Logs:
-
-  journalctl --user -u ${SYSTEMD_SERVICE} -f
-
-Health checks:
-
-  curl http://127.0.0.1:7777/health
-  curl http://127.0.0.1:7777/v1/models
-
-Change model or sampling:
-
-  nano ${ENV_FILE}
-  systemctl --user restart ${SYSTEMD_SERVICE}
-
-Change GPU memory allocation:
-
-  $0 --gpu-mem 60|90|114|124
-  sudo reboot
-
-Uninstall (keeps ~/.llamacpp):
-
-  $0 --uninstall
-
-Note:
-
-  Re-running this script is idempotent. Existing llama.env is preserved.
-  GRUB parameters are merged (replaced, not duplicated) on each run.
-  Reboot after changing --gpu-mem for kernel parameters to take effect.
-
-EOT
+  say
+  say "=== Setup complete ==="
+  say
+  say "  GPU allocation:  ${GPU_MEM} GB"
+  say "  Kernel params:   iommu=pt amdgpu.gttsize=${local_gttsize} ttm.pages_limit=${local_pages_limit}"
+  say "  Service:         ${SYSTEMD_SERVICE}"
+  say "  Model config:    ${ENV_FILE}"
+  say "  Log:             ${LOG_FILE}"
+  say
+  say "  systemctl --user status ${SYSTEMD_SERVICE}"
+  say "  curl http://127.0.0.1:7777/health"
+  say
+  say "Reboot if kernel parameters were just changed."
 }
 
 if [[ "${EUID}" -eq 0 ]]; then
