@@ -2,15 +2,15 @@
 
 ## Назначение
 
-Эта схема предназначена для запуска `llama.cpp` с ROCm на Ubuntu 26.04 под текущим пользователем, без хранения кеша и конфигов в `/opt` и без постоянной работы от root.
+Схема для запуска `llama.cpp` с ROCm на Ubuntu 26.04 под текущим пользователем, без хранения кеша и конфигов в `/opt` и без постоянной работы от root.
 
-Используется контейнер:
+Контейнер:
 
 ```text
-docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2
+docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3
 ```
 
-Рабочая схема:
+Схема:
 
 ```text
 Ubuntu 26.04
@@ -24,29 +24,30 @@ user systemd Quadlet
 llama.cpp ROCm server
 ```
 
+Скрипт установки: `llamacpp-podman-setup.sh`
+
 ---
 
 # 1. Что создаёт установочный скрипт
-
-Скрипт `setup-llamacpp-rocm-user-idempotent.sh` создаёт структуру:
 
 ```text
 ~/.llamacpp/
 ├── cache/
 │   └── постоянный кеш моделей llama.cpp / Hugging Face
 ├── config/
-│   └── llama.env
+│   ├── llama.env      # модель, sampling, EXTRA_ARGS
+│   └── system.env     # GPU_VRAM_GB (60|90|114|124)
 └── scripts/
     └── start-llama.sh
 ```
 
-И Quadlet-файл:
+Quadlet:
 
 ```text
 ~/.config/containers/systemd/llama.cpp-rocm.container
 ```
 
-После запуска появляется user-service:
+User-service:
 
 ```text
 llama.cpp-rocm.service
@@ -54,54 +55,51 @@ llama.cpp-rocm.service
 
 ---
 
-# 2. Важная особенность AMD Ryzen AI MAX+ 395 / Strix Halo
+# 2. AMD Ryzen AI MAX+ 395 / Strix Halo: память GPU
 
-Для больших моделей на системе с 128 GB unified memory обязательно нужны параметры ядра:
-
-```text
-iommu=pt amdgpu.gttsize=126976 ttm.pages_limit=32505856
-```
-
-Без них ROCm может видеть около 64 GB и падать на больших Q8-моделях:
+На Strix Halo с 128 GB unified memory ROCm по умолчанию видит ~64 GB. Для больших моделей нужны параметры ядра:
 
 ```text
-cudaMalloc failed: out of memory
+iommu=pt amdgpu.gttsize=<MiB> ttm.pages_limit=<pages>
 ```
 
-Проверить текущие параметры:
+Скрипт **сам** добавляет их в `/etc/default/grub`, **не затирая** остальные параметры (`quiet splash` и т.д.). При повторном запуске с другим `--gpu-mem` старые значения `amdgpu.gttsize` и `ttm.pages_limit` **заменяются**, а не дублируются.
+
+## Выбор объёма GPU (GB)
+
+| `--gpu-mem` | `amdgpu.gttsize` (MiB) | `ttm.pages_limit` | Total VRAM в llama-cli |
+|-------------|------------------------|-------------------|------------------------|
+| 60          | 61440                  | 15728640          | ~61440 MiB             |
+| 90          | 92160                  | 23592960          | ~92160 MiB             |
+| 114         | 116736                 | 29884416          | ~116736 MiB            |
+| 124         | 126976                 | 32505856          | ~126976 MiB            |
+
+Формулы:
+
+```text
+amdgpu.gttsize    = GB × 1024
+ttm.pages_limit   = GB × 262144
+```
+
+Выбор сохраняется в `~/.llamacpp/config/system.env`:
+
+```bash
+GPU_VRAM_GB=124
+```
+
+Проверить активные параметры:
 
 ```bash
 cat /proc/cmdline
 ```
 
-В выводе должны быть:
-
-```text
-iommu=pt
-amdgpu.gttsize=126976
-ttm.pages_limit=32505856
-```
-
-Если их нет, открыть:
+После смены `--gpu-mem` — **reboot**:
 
 ```bash
-sudo nano /etc/default/grub
-```
-
-Пример строки:
-
-```bash
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash iommu=pt amdgpu.gttsize=126976 ttm.pages_limit=32505856"
-```
-
-Применить:
-
-```bash
-sudo update-grub
 sudo reboot
 ```
 
-После правильной настройки `llama-cli --list-devices` внутри контейнера должен показывать примерно:
+Ожидаемый вывод `llama-cli --list-devices` (для 124 GB):
 
 ```text
 ggml_cuda_init: found 1 ROCm devices (Total VRAM: 126976 MiB)
@@ -112,34 +110,26 @@ Device 0: AMD Radeon 8060S Graphics, gfx1151
 
 # 3. Предварительные условия
 
-Установить Podman:
-
 ```bash
 sudo apt update
 sudo apt install -y podman curl git
 ```
 
-Пользователь должен быть в группах:
+Группы пользователя:
 
 ```text
 render
 video
 ```
 
-Проверить:
-
 ```bash
 groups $USER
-```
-
-Если групп нет:
-
-```bash
+# при необходимости:
 sudo usermod -aG render,video $USER
 sudo reboot
 ```
 
-Проверить устройства:
+Устройства:
 
 ```bash
 ls -l /dev/kfd /dev/dri
@@ -147,123 +137,106 @@ ls -l /dev/kfd /dev/dri
 
 ---
 
-# 4. Установка через готовый скрипт
-
-Сделать скрипт исполняемым:
+# 4. Установка
 
 ```bash
-chmod +x setup-llamacpp-rocm-user-idempotent.sh
+chmod +x llamacpp-podman-setup.sh
+./llamacpp-podman-setup.sh
 ```
 
-Запустить от обычного пользователя, не через `sudo`:
+С указанием объёма GPU:
 
 ```bash
-./setup-llamacpp-rocm-user-idempotent.sh
+./llamacpp-podman-setup.sh --gpu-mem 124
 ```
 
 Скрипт:
 
-- проверяет `podman`, `systemctl`, `loginctl`;
-- проверяет `/dev/kfd` и `/dev/dri`;
-- проверяет группы `render` и `video`;
-- проверяет параметры GRUB для Strix Halo;
-- создаёт `~/.llamacpp`;
-- создаёт дефолтный `llama.env`, если его ещё нет;
-- создаёт `start-llama.sh`;
-- создаёт user Quadlet;
-- скачивает образ `rocm-7.2.2`;
+- проверяет `podman`, `systemctl`, `loginctl`, `sudo`;
+- проверяет `/dev/kfd`, `/dev/dri`, группы `render`/`video`;
+- записывает `system.env` с выбором GPU;
+- **идемпотентно** обновляет GRUB (`iommu=pt`, `amdgpu.gttsize`, `ttm.pages_limit`);
+- создаёт `~/.llamacpp` (если нет);
+- создаёт дефолтный `llama.env`, **если его ещё нет**;
+- создаёт/обновляет `start-llama.sh` и Quadlet;
+- скачивает образ `rocm-7.2.3`;
 - проверяет ROCm внутри контейнера;
 - включает `linger`;
-- запускает user-service.
+- запускает `llama.cpp-rocm.service`.
 
 ---
 
-# 5. Повторный запуск скрипта
-
-Скрипт рассчитан на повторный запуск.
-
-При повторном запуске он:
-
-- не создаёт дубликаты каталогов;
-- не создаёт дубликаты systemd-юнитов;
-- не создаёт второй контейнер с тем же именем;
-- не перетирает существующий `~/.llamacpp/config/llama.env`;
-- перезаписывает helper-скрипт только если его содержимое изменилось;
-- перезаписывает Quadlet только если его содержимое изменилось;
-- выполняет `systemctl --user daemon-reload`;
-- запускает тот же `llama.cpp-rocm.service`.
-
-Важно: если ты уже изменил модель в `llama.env`, повторный запуск setup-скрипта её не сбросит.
-
----
-
-# 6. Проблема Quadlet: почему не используется `enable --now`
-
-Для Quadlet нельзя делать:
+# 5. Удаление сервиса
 
 ```bash
-systemctl --user enable --now llama.cpp-rocm.service
+./llamacpp-podman-setup.sh --uninstall
 ```
 
-Это может дать ошибку:
+Удаляется:
+
+- user-service и Quadlet;
+- контейнер `llama.cpp-rocm`.
+
+**Сохраняется** весь каталог `~/.llamacpp` (config, cache, scripts).
+
+Переустановка:
+
+```bash
+./llamacpp-podman-setup.sh --gpu-mem 124
+```
+
+---
+
+# 6. Повторный запуск (идемпотентность)
+
+При повторном `./llamacpp-podman-setup.sh`:
+
+- не перетирает существующий `llama.env`;
+- обновляет `start-llama.sh` и Quadlet только при изменении содержимого;
+- **заменяет** (не дублирует) параметры ядра в GRUB при смене `--gpu-mem`;
+- обновляет `system.env`;
+- выполняет `systemctl --user daemon-reload`;
+- запускает тот же сервис.
+
+Сменить объём GPU:
+
+```bash
+./llamacpp-podman-setup.sh --gpu-mem 90
+sudo reboot
+```
+
+---
+
+# 7. Quadlet: почему не `enable --now`
+
+```bash
+systemctl --user enable --now llama.cpp-rocm.service   # НЕ использовать
+```
+
+Ошибка:
 
 ```text
 Failed to enable unit: Unit ... is transient or generated
 ```
 
-Причина: `llama.cpp-rocm.service` является сгенерированным unit-файлом из:
-
-```text
-~/.config/containers/systemd/llama.cpp-rocm.container
-```
-
-Правильная команда:
+Правильно:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user start llama.cpp-rocm.service
 ```
 
-Автозапуск после reboot обеспечивают:
-
-```ini
-[Install]
-WantedBy=default.target
-```
-
-в Quadlet-файле и включённый linger:
-
-```bash
-sudo loginctl enable-linger $USER
-```
-
-Проверить linger:
-
-```bash
-loginctl show-user $USER | grep Linger
-```
-
-Ожидаемо:
-
-```text
-Linger=yes
-```
+Автозапуск: `[Install] WantedBy=default.target` в Quadlet + `sudo loginctl enable-linger $USER`.
 
 ---
 
-# 7. Дефолтная модель
+# 8. Дефолтная модель и sampling
 
-Скрипт создаёт дефолтный конфиг:
-
-```text
-~/.llamacpp/config/llama.env
-```
-
-Содержимое по умолчанию:
+`~/.llamacpp/config/llama.env` при первой установке:
 
 ```bash
-HF_REPO="Qwen/Qwen3-Coder-Next-GGUF"
-HF_FILE="Qwen3-Coder-Next-Q8_0/Qwen3-Coder-Next-Q8_0-00001-of-00004.gguf"
+HF_REPO="unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+HF_FILE="Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
 
 HOST="0.0.0.0"
 PORT="7777"
@@ -271,143 +244,101 @@ PORT="7777"
 CTX="242144"
 NGL="999"
 
-EXTRA_ARGS="-fa 1 --no-mmap --jinja"
+TEMPERATURE="0.6"
+TOP_P="0.95"
+TOP_K="20"
+MIN_P="0.0"
+PRESENCE_PENALTY="0.0"
+REPETITION_PENALTY="1.0"
+
+# MTP draft speculation
+EXTRA_ARGS="-fa 1 --no-mmap --jinja --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.75"
 ```
 
----
+## Sampling-параметры
 
-# 8. Управление сервисом
+Передаются в `llama-server` через `start-llama.sh`:
 
-Статус:
+| `llama.env`           | Флаг llama-server      |
+|-----------------------|------------------------|
+| `TEMPERATURE`         | `--temp`               |
+| `TOP_P`               | `--top-p`              |
+| `TOP_K`               | `--top-k`              |
+| `MIN_P`               | `--min-p`              |
+| `PRESENCE_PENALTY`    | `--presence-penalty`   |
+| `REPETITION_PENALTY`  | `--repeat-penalty`     |
 
-```bash
-systemctl --user status llama.cpp-rocm.service
-```
-
-Логи:
-
-```bash
-journalctl --user -u llama.cpp-rocm.service -f
-```
-
-Запуск:
-
-```bash
-systemctl --user start llama.cpp-rocm.service
-```
-
-Остановка:
-
-```bash
-systemctl --user stop llama.cpp-rocm.service
-```
-
-Перезапуск:
+После правки:
 
 ```bash
 systemctl --user restart llama.cpp-rocm.service
 ```
 
-Проверка API:
+## MTP-модели
+
+Для MTP-моделей (как дефолтная Qwen3.6) в `EXTRA_ARGS` нужны:
+
+```text
+--spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.75
+```
+
+Для обычных (не-MTP) моделей эти три флага убрать из `EXTRA_ARGS`.
+
+---
+
+# 9. Управление сервисом
 
 ```bash
+systemctl --user status llama.cpp-rocm.service
+journalctl --user -u llama.cpp-rocm.service -f
+systemctl --user start llama.cpp-rocm.service
+systemctl --user stop llama.cpp-rocm.service
+systemctl --user restart llama.cpp-rocm.service
+
 curl http://127.0.0.1:7777/health
 curl http://127.0.0.1:7777/v1/models
 ```
 
 ---
 
-# 9. Работа с моделями
+# 10. Работа с моделями
 
-## 9.1. Изменить модель
-
-Открыть конфиг:
+## 10.1. Сменить модель
 
 ```bash
 nano ~/.llamacpp/config/llama.env
-```
-
-Изменить:
-
-```bash
-HF_REPO="..."
-HF_FILE="..."
-CTX="..."
-NGL="..."
-EXTRA_ARGS="..."
-```
-
-Перезапустить сервис:
-
-```bash
 systemctl --user restart llama.cpp-rocm.service
 ```
 
-После reboot будет запущена последняя модель, указанная в `llama.env`.
-
----
-
-## 9.2. Модель без `HF_FILE`
-
-Некоторые репозитории можно запускать через quant-suffix:
+## 10.2. Без `HF_FILE`
 
 ```bash
-HF_REPO="Qwen/Qwen3-Coder-Next-GGUF:Q4_K_M"
+HF_REPO="user/model-repo:Q4_K_M"
 HF_FILE=""
-HOST="0.0.0.0"
-PORT="7777"
-CTX="131072"
-NGL="999"
-EXTRA_ARGS="-fa 1 --no-mmap --jinja"
 ```
 
-Если `HF_FILE` пустой, wrapper запускает `llama-server` только с `--hf-repo`.
-
----
-
-## 9.3. Модель с конкретным GGUF-файлом
-
-Пример:
+## 10.3. С конкретным GGUF
 
 ```bash
-HF_REPO="Qwen/Qwen3-Coder-Next-GGUF"
-HF_FILE="Qwen3-Coder-Next-Q8_0/Qwen3-Coder-Next-Q8_0-00001-of-00004.gguf"
+HF_REPO="unsloth/Qwen3.6-35B-A3B-MTP-GGUF"
+HF_FILE="Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
 ```
 
-Важно: не передавать путь к файлу в `HF_REPO`.
-
-Неправильно:
+Неправильно — путь в `HF_REPO`:
 
 ```bash
-HF_REPO="Qwen/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q8_0/Qwen3-Coder-Next-Q8_0-00001-of-00004.gguf"
-```
-
-Правильно:
-
-```bash
-HF_REPO="Qwen/Qwen3-Coder-Next-GGUF"
-HF_FILE="Qwen3-Coder-Next-Q8_0/Qwen3-Coder-Next-Q8_0-00001-of-00004.gguf"
+HF_REPO="user/model/path/file.gguf"   # invalid
 ```
 
 ---
 
-# 10. Загрузка новых моделей
+# 11. Загрузка новых моделей
 
-## 10.1. Рекомендуемый способ: foreground warm-up
-
-Иногда user-service при старте не может сам скачать новую большую модель, особенно если сеть ещё не готова, Hugging Face требует токен или нужно увидеть интерактивный вывод.
-
-Надёжный workflow:
-
-Остановить сервис:
+## Foreground warm-up
 
 ```bash
 systemctl --user stop llama.cpp-rocm.service
-```
 
-Запустить вручную в foreground:
-
-```bash
 podman run --rm -it \
   --name llama.cpp-rocm \
   --network host \
@@ -420,117 +351,36 @@ podman run --rm -it \
   -v ~/.llamacpp/cache:/models-cache:rw \
   -v ~/.llamacpp/config:/config:ro \
   -v ~/.llamacpp/scripts/start-llama.sh:/usr/local/bin/start-llama.sh:ro \
-  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2 \
+  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3 \
   /usr/local/bin/start-llama.sh
 ```
 
-Дождаться скачивания модели.
+Дождаться скачивания → `Ctrl+C` → `systemctl --user start llama.cpp-rocm.service`.
 
-Остановить `Ctrl+C`.
-
-Запустить сервис:
-
-```bash
-systemctl --user start llama.cpp-rocm.service
-```
-
-Проверить:
-
-```bash
-curl http://127.0.0.1:7777/health
-```
-
----
-
-## 10.2. Проверить кеш
-
-Кеш находится здесь:
-
-```text
-~/.llamacpp/cache
-```
-
-Размер:
+## Кеш
 
 ```bash
 du -sh ~/.llamacpp/cache
-```
-
-Найти GGUF-файлы:
-
-```bash
-find ~/.llamacpp/cache -type f | grep -i '.gguf' | head
-```
-
-Найти Qwen:
-
-```bash
-find ~/.llamacpp/cache -type f | grep -i 'Qwen3-Coder-Next' | head
-```
-
----
-
-## 10.3. Перенести старый кеш из `/opt`
-
-Если модель уже была скачана раньше в `/opt/llama/cache`, можно перенести её:
-
-```bash
-sudo cp -a /opt/llama/cache/. /home/mikay/.llamacpp/cache/
-sudo chown -R mikay:mikay /home/mikay/.llamacpp
-```
-
-После этого:
-
-```bash
-systemctl --user restart llama.cpp-rocm.service
-```
-
----
-
-# 11. Права на новый кеш
-
-Если файлы случайно оказались под root, исправить:
-
-```bash
-sudo chown -R mikay:mikay /home/mikay/.llamacpp
-```
-
-Только кеш:
-
-```bash
-sudo chown -R mikay:mikay /home/mikay/.llamacpp/cache
+find ~/.llamacpp/cache -type f -name '*.gguf' | head
 ```
 
 ---
 
 # 12. Обновление контейнера
 
-В Quadlet стоит:
-
-```ini
-Pull=never
-```
-
-Это сделано специально, чтобы сервис не проверял и не тянул образ при каждом старте.
-
-Обновлять образ вручную:
+В Quadlet: `Pull=never` — образ не тянется при каждом старте.
 
 ```bash
 systemctl --user stop llama.cpp-rocm.service
-podman pull docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2
-systemctl --user start llama.cpp-rocm.service
+podman pull docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3
+./llamacpp-podman-setup.sh --gpu-mem 124   # обновит Quadlet при смене тега в скрипте
 ```
 
-Проверить:
-
-```bash
-systemctl --user status llama.cpp-rocm.service
-curl http://127.0.0.1:7777/health
-```
+Или повторный запуск setup-скрипта после обновления `LLAMACPP_ROCM_IMAGE`.
 
 ---
 
-# 13. Проверка ROCm внутри контейнера
+# 13. Проверка ROCm
 
 ```bash
 podman run --rm -it \
@@ -539,99 +389,44 @@ podman run --rm -it \
   --group-add video \
   --group-add render \
   --security-opt seccomp=unconfined \
-  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2 \
+  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3 \
   llama-cli --list-devices
-```
-
-Ожидаемый результат после правильного GRUB:
-
-```text
-ggml_cuda_init: found 1 ROCm devices (Total VRAM: 126976 MiB)
-Device 0: AMD Radeon 8060S Graphics, gfx1151
 ```
 
 ---
 
 # 14. Типовые проблемы
 
-## 14.1. `Failed to enable unit: transient or generated`
+## `Failed to enable unit: transient or generated`
 
-Не использовать:
+Использовать `daemon-reload` + `start`, не `enable --now`.
 
-```bash
-systemctl --user enable --now llama.cpp-rocm.service
-```
-
-Использовать:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user start llama.cpp-rocm.service
-```
-
----
-
-## 14.2. `cudaMalloc failed: out of memory` около 64 GB
-
-Проверить:
+## `cudaMalloc failed: out of memory` около 64 GB
 
 ```bash
 cat /proc/cmdline
+./llamacpp-podman-setup.sh --gpu-mem 124
+sudo reboot
 ```
 
-Нужны параметры:
+## Сервис не скачивает модель
 
-```text
-iommu=pt amdgpu.gttsize=126976 ttm.pages_limit=32505856
-```
-
----
-
-## 14.3. Сервис не скачивает модель
-
-Использовать foreground warm-up:
+Foreground warm-up (раздел 11) + права:
 
 ```bash
-systemctl --user stop llama.cpp-rocm.service
-podman run --rm -it ...
-systemctl --user start llama.cpp-rocm.service
+sudo chown -R $USER:$USER ~/.llamacpp
 ```
 
-И проверить права:
+## `invalid HF repo format`
 
-```bash
-sudo chown -R mikay:mikay /home/mikay/.llamacpp
-```
+Разделять `HF_REPO` и `HF_FILE` (раздел 10.3).
 
----
-
-## 14.4. `invalid HF repo format`
-
-Неправильно:
-
-```bash
-HF_REPO="user/model/path/to/file.gguf"
-```
-
-Правильно:
-
-```bash
-HF_REPO="user/model"
-HF_FILE="path/to/file.gguf"
-```
-
----
-
-## 14.5. Конфликт имени контейнера
-
-Если ручной запуск говорит, что контейнер `llama.cpp-rocm` уже существует:
+## Конфликт имени контейнера
 
 ```bash
 systemctl --user stop llama.cpp-rocm.service
 podman rm -f llama.cpp-rocm
 ```
-
-Затем повторить ручной запуск.
 
 ---
 
@@ -640,67 +435,58 @@ podman rm -f llama.cpp-rocm
 ## Установка
 
 ```bash
-chmod +x setup-llamacpp-rocm-user-idempotent.sh
-./setup-llamacpp-rocm-user-idempotent.sh
+chmod +x llamacpp-podman-setup.sh
+./llamacpp-podman-setup.sh --gpu-mem 124
+sudo reboot
 ```
 
 ## Проверка
 
 ```bash
 systemctl --user status llama.cpp-rocm.service
-journalctl --user -u llama.cpp-rocm.service -f
 curl http://127.0.0.1:7777/health
 ```
 
-## Смена модели
+## Смена модели / sampling
 
 ```bash
 nano ~/.llamacpp/config/llama.env
 systemctl --user restart llama.cpp-rocm.service
 ```
 
-## Загрузка новой модели вручную
+## Смена GPU memory
 
 ```bash
-systemctl --user stop llama.cpp-rocm.service
-podman run --rm -it ... /usr/local/bin/start-llama.sh
-systemctl --user start llama.cpp-rocm.service
+./llamacpp-podman-setup.sh --gpu-mem 90
+sudo reboot
+```
+
+## Удаление
+
+```bash
+./llamacpp-podman-setup.sh --uninstall
 ```
 
 ## Обновление образа
 
 ```bash
-systemctl --user stop llama.cpp-rocm.service
-podman pull docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2
-systemctl --user start llama.cpp-rocm.service
+./llamacpp-podman-setup.sh --gpu-mem 124
 ```
 
 ---
 
-# 16. Что считается успешной установкой
+# 16. Успешная установка
 
-```text
+```bash
 systemctl --user status llama.cpp-rocm.service
+# Active: active (running)
+
+curl http://127.0.0.1:7777/health
+# OK после загрузки модели
 ```
 
-должен показывать:
-
-```text
-Active: active (running)
-Loaded: loaded (.../llama.cpp-rocm.container; generated)
-```
-
-В логах должно быть:
+В логах (124 GB):
 
 ```text
 ggml_cuda_init: found 1 ROCm devices (Total VRAM: 126976 MiB)
-Device 0: AMD Radeon 8060S Graphics, gfx1151
 ```
-
-API:
-
-```bash
-curl http://127.0.0.1:7777/health
-```
-
-должен отвечать после полной загрузки модели.

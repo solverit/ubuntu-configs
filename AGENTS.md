@@ -72,17 +72,15 @@ ubuntu-configs/
 
 ## llama.cpp ROCm
 
-- Образ по умолчанию: `docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.2`
+- Образ по умолчанию: `docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3`
 - User systemd Quadlet → `llama.cpp-rocm.service`
-- Конфиг модели: `~/.llamacpp/config/llama.env`
+- Конфиг модели: `~/.llamacpp/config/llama.env` (sampling, MTP через `EXTRA_ARGS`)
+- Системный конфиг: `~/.llamacpp/config/system.env` (`GPU_VRAM_GB`: 60|90|114|124)
 - Порт по умолчанию: `7777`
-- **GRUB не трогается скриптом.** Для больших моделей на Strix Halo нужны параметры ядра:
-
-  ```text
-  iommu=pt amdgpu.gttsize=126976 ttm.pages_limit=32505856
-  ```
-
-- Не использовать `systemctl --user enable` для Quadlet-generated unit — только `start`/`restart` (см. комментарии в скрипте).
+- **GRUB** обновляется скриптом идемпотентно: `iommu=pt`, `amdgpu.gttsize`, `ttm.pages_limit` (замена, не дописывание)
+- Дефолтная модель: `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` + MTP flags в `EXTRA_ARGS`
+- Удаление: `./llamacpp-podman-setup.sh --uninstall` (сохраняет `~/.llamacpp`)
+- Не использовать `systemctl --user enable` для Quadlet-generated unit — только `start`/`restart`
 
 Подробности, troubleshooting, смена модели — в `llamacpp-podman-guide.md`.
 
