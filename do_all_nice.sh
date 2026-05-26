@@ -59,6 +59,9 @@ echo "Target user: ${TARGET_USER}"
 apt-get update
 apt-get -y dist-upgrade
 
+apt-get -y install ca-certificates curl wget gnupg software-properties-common
+install -m 0755 -d /etc/apt/keyrings
+
 # Добавляем нужные репы
 add-apt-repository --yes ppa:libreoffice/ppa
 
@@ -66,26 +69,27 @@ apt-get update
 
 if [[ "${DESKTOP}" == "gnome" ]]; then
   # Фиксим кодировки Gedit (только GNOME)
-  sudo -u "${TARGET_USER}" gsettings set org.gnome.gedit.preferences.encodings candidate-encodings "['UTF-8', 'WINDOWS-1251', 'KOI8-R', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
+  if sudo -u "${TARGET_USER}" gsettings list-schemas | grep -qxF "org.gnome.gedit.preferences.encodings" \
+    && sudo -u "${TARGET_USER}" gsettings list-keys org.gnome.gedit.preferences.encodings | grep -qxF "candidate-encodings"; then
+    sudo -u "${TARGET_USER}" gsettings set org.gnome.gedit.preferences.encodings candidate-encodings "['UTF-8', 'WINDOWS-1251', 'KOI8-R', 'CURRENT', 'ISO-8859-15', 'UTF-16']"
+  else
+    echo "Skip Gedit encodings: gsettings schema/key is not available in this Ubuntu/Gedit version."
+  fi
 fi
 
 # Sublime Text
-wget -qO - https://download.sublimetext.com/sublimehq-pub.gpg | apt-key add -
-echo "deb https://download.sublimetext.com/ apt/stable/" > /etc/apt/sources.list.d/sublime-text.list
+wget -qO /etc/apt/keyrings/sublimehq-pub.asc https://download.sublimetext.com/sublimehq-pub.gpg
+echo "deb [signed-by=/etc/apt/keyrings/sublimehq-pub.asc] https://download.sublimetext.com/ apt/stable/" > /etc/apt/sources.list.d/sublime-text.list
 
 # VS Code
-wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-install -o root -g root -m 644 packages.microsoft.gpg /etc/apt/trusted.gpg.d/
-sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/trusted.gpg.d/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
-rm -f packages.microsoft.gpg
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor --yes -o /etc/apt/keyrings/packages.microsoft.gpg
+echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list
 
 # Enpass
-wget -O - https://apt.enpass.io/keys/enpass-linux.key | tee /etc/apt/trusted.gpg.d/enpass.asc > /dev/null
-echo "deb https://apt.enpass.io/ stable main" > /etc/apt/sources.list.d/enpass.list
+wget -qO /etc/apt/keyrings/enpass.asc https://apt.enpass.io/keys/enpass-linux.key
+echo "deb [signed-by=/etc/apt/keyrings/enpass.asc] https://apt.enpass.io/ stable main" > /etc/apt/sources.list.d/enpass.list
 
 # Docker (deb822)
-apt-get -y install ca-certificates curl
-install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
@@ -99,8 +103,9 @@ Signed-By: /etc/apt/keyrings/docker.asc
 EOF
 
 # Yandex Disk
-echo "deb http://repo.yandex.ru/yandex-disk/deb/ stable main" > /etc/apt/sources.list.d/yandex-disk.list
-wget http://repo.yandex.ru/yandex-disk/YANDEX-DISK-KEY.GPG -O- | apt-key add -
+wget -qO- http://repo.yandex.ru/yandex-disk/YANDEX-DISK-KEY.GPG | gpg --dearmor --yes -o /etc/apt/keyrings/yandex-disk.gpg
+echo "deb [signed-by=/etc/apt/keyrings/yandex-disk.gpg] http://repo.yandex.ru/yandex-disk/deb/ stable main" > /etc/apt/sources.list.d/yandex-disk.list
+chmod a+r /etc/apt/keyrings/sublimehq-pub.asc /etc/apt/keyrings/packages.microsoft.gpg /etc/apt/keyrings/enpass.asc /etc/apt/keyrings/yandex-disk.gpg
 apt-get update
 apt-get -y install yandex-disk
 
@@ -137,8 +142,8 @@ if [[ ! -f "${TARGET_HOME}/.cargo/bin/rustc" ]]; then
   sudo -u "${TARGET_USER}" curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 
-snap install postman
-snap install discord
+#snap install postman
+#snap install discord
 
 # Chrome
 TMPDIR="$(mktemp -d)"
