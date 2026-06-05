@@ -7,7 +7,7 @@
 Контейнер:
 
 ```text
-docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3
+docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.4
 ```
 
 Схема:
@@ -388,7 +388,7 @@ podman run --rm -it \
   -v ~/.llamacpp/cache:/models-cache:rw \
   -v ~/.llamacpp/config:/config:ro \
   -v ~/.llamacpp/scripts/start-llama.sh:/usr/local/bin/start-llama.sh:ro \
-  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3 \
+  docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.4 \
   /usr/local/bin/start-llama.sh
 ```
 
@@ -409,7 +409,7 @@ find ~/.llamacpp/cache -type f -name '*.gguf' | head
 
 ```bash
 systemctl --user stop llama.cpp-rocm.service
-podman pull docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3
+podman pull docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.4
 ./llamacpp-podman-setup.sh --gpu-mem 124   # обновит Quadlet при смене тега в скрипте
 ```
 
