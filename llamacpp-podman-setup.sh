@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # Flow: collect all parameters first, then configure silently (no further prompts).
 
-IMAGE_DEFAULT="${LLAMACPP_ROCM_IMAGE:-docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.3}"
+IMAGE_DEFAULT="${LLAMACPP_ROCM_IMAGE:-docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.2.4}"
 SERVICE_NAME="${LLAMACPP_SERVICE_NAME:-llama.cpp-rocm}"
 
 BASE_DIR="${LLAMACPP_BASE_DIR:-${HOME}/.llamacpp}"
