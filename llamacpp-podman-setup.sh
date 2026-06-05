@@ -371,9 +371,6 @@ collect_install_parameters() {
   log "Parameters collected: GPU_MEM=${GPU_MEM}"
 }
 
-  log "GRUB updated for ${gb} GB"
-}
-
 reset_grub_managed_params() {
   local current stripped tmp_grub
 
