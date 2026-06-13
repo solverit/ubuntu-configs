@@ -109,6 +109,9 @@ chmod a+r /etc/apt/keyrings/sublimehq-pub.asc /etc/apt/keyrings/packages.microso
 apt-get update
 apt-get -y install yandex-disk
 
+# Node.js LTS (NodeSource) — автоматически определяет актуальную LTS-версию
+curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+
 # Обновление пакетов
 apt-get update
 apt-get -y dist-upgrade
@@ -118,7 +121,7 @@ PACKAGES=(
   zsh mc git maven p7zip vlc
   sublime-text code
   openvpn
-  build-essential golang-go keepassxc
+  build-essential golang-go keepassxc nodejs
   docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 )
 
@@ -141,6 +144,12 @@ chsh -s "$(which zsh)" "${TARGET_USER}"
 if [[ ! -f "${TARGET_HOME}/.cargo/bin/rustc" ]]; then
   sudo -u "${TARGET_USER}" curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
+
+# TypeScript (глобально, через npm из NodeSource-пакета)
+npm install -g typescript
+
+# Zed editor (современный редактор кода)
+curl -f https://zed.dev/install.sh | sh
 
 #snap install postman
 #snap install discord
