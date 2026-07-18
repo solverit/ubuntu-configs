@@ -222,7 +222,7 @@ apply_purge_all_flags() {
 
 has_managed_kernel_params() {
   local params="$1"
-  [[ "$params" == *"iommu=pt"* ]] \
+  [[ "$params" == *"amd_iommu=off"* ]] \
     || [[ "$params" == *"amdgpu.gttsize="* ]] \
     || [[ "$params" == *"ttm.pages_limit="* ]]
 }
@@ -343,7 +343,7 @@ print_install_summary() {
   say
   say "Summary:"
   say "  GPU allocation:    ${GPU_MEM} GB"
-  say "  Kernel params:     iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
+  say "  Kernel params:     amd_iommu=off amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
   say "  Container image:   ${IMAGE_DEFAULT}"
   say "  Model config:      $(model_config_summary)"
   say "  Service:           ${SYSTEMD_SERVICE}"
@@ -460,7 +460,7 @@ print_uninstall_summary() {
     say "  [purge-all] Remove ~/.llamacpp (config, cache, scripts)"
     say "  [purge-all] Remove Podman container(s) for this setup"
     say "  [purge-all] Remove container image: ${IMAGE_DEFAULT}"
-    say "  [purge-all] Reset GRUB kernel parameters (iommu=pt, amdgpu.gttsize, ttm.pages_limit)"
+    say "  [purge-all] Reset GRUB kernel parameters (amd_iommu=off, amdgpu.gttsize, ttm.pages_limit)"
     say "  [purge-all] Disable user linger"
     return 0
   fi
@@ -555,7 +555,7 @@ normalize_cmdline() {
 strip_managed_kernel_params() {
   local params="$1"
   params="$(echo "$params" | sed -E \
-    -e 's/(^|[[:space:]])iommu=pt($|[[:space:]])/ /g' \
+    -e 's/(^|[[:space:]])amd_iommu=off($|[[:space:]])/ /g' \
     -e 's/(^|[[:space:]])amdgpu\.gttsize=[^[:space:]]+//g' \
     -e 's/(^|[[:space:]])ttm\.pages_limit=[^[:space:]]+//g')"
   normalize_cmdline "$params"
@@ -568,7 +568,7 @@ merge_kernel_params() {
   local merged
 
   merged="$(strip_managed_kernel_params "$existing")"
-  merged="${merged} iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
+  merged="${merged} amd_iommu=off amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
   normalize_cmdline "$merged"
 }
 
@@ -587,7 +587,7 @@ kernel_params_match() {
   local params="$1"
   local gttsize="$2"
   local pages_limit="$3"
-  [[ "$params" == *"iommu=pt"* ]] \
+  [[ "$params" == *"amd_iommu=off"* ]] \
     && [[ "$params" == *"amdgpu.gttsize=${gttsize}"* ]] \
     && [[ "$params" == *"ttm.pages_limit=${pages_limit}"* ]]
 }
@@ -638,7 +638,7 @@ check_runtime_kernel_params() {
   fi
 
   warn "Active kernel parameters do not match ${gb} GB yet — reboot required."
-  log "Expected: iommu=pt amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
+  log "Expected: amd_iommu=off amdgpu.gttsize=${gttsize} ttm.pages_limit=${pages_limit}"
 }
 
 write_if_changed() {
@@ -962,7 +962,7 @@ EOT
   say "=== Setup complete ==="
   say
   say "  GPU allocation:  ${GPU_MEM} GB"
-  say "  Kernel params:   iommu=pt amdgpu.gttsize=${local_gttsize} ttm.pages_limit=${local_pages_limit}"
+  say "  Kernel params:   amd_iommu=off amdgpu.gttsize=${local_gttsize} ttm.pages_limit=${local_pages_limit}"
   say "  Service:         ${SYSTEMD_SERVICE}"
   say "  Model config:    ${ENV_FILE}"
   say "  Log:             ${LOG_FILE}"
