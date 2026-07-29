@@ -118,7 +118,7 @@ apt-get -y dist-upgrade
 
 # Базовый набор пакетов (актуальный)
 PACKAGES=(
-  zsh mc git maven p7zip vlc
+  zsh mc git default-jdk maven p7zip vlc
   sublime-text code
   openvpn
   build-essential golang-go keepassxc nodejs
